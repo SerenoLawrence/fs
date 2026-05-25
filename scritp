@@ -224,21 +224,59 @@ if not LuxyLib or not DB then
     return
 end
 
+-- local smoothMoveConn   = nil
+-- local smoothMoveTarget = nil
+
+-- local function StartSmoothMovement()
+--     if smoothMoveConn then return end
+--     smoothMoveConn = game:GetService("RunService").Heartbeat:Connect(function()
+--         if not smoothMoveTarget then return end
+--         local char = game:GetService("Players").LocalPlayer.Character
+--         if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+--         local hrp  = char.HumanoidRootPart
+--         local dist = (hrp.Position - smoothMoveTarget).Magnitude
+--         if dist < 3 then smoothMoveTarget = nil; return end
+--         local dir   = (smoothMoveTarget - hrp.Position).Unit
+--         local speed = _E.VolcanoTweenSpeed or 85
+--         hrp.CFrame  = hrp.CFrame + dir * (speed * 0.016)
+--     end)
+-- end
+
+-- local function StopSmoothMovement()
+--     if smoothMoveConn then
+--         smoothMoveConn:Disconnect()
+--         smoothMoveConn = nil
+--     end
+--     smoothMoveTarget = nil
+-- end
+
+
 local smoothMoveConn   = nil
 local smoothMoveTarget = nil
 
 local function StartSmoothMovement()
     if smoothMoveConn then return end
-    smoothMoveConn = game:GetService("RunService").Heartbeat:Connect(function()
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+
+    smoothMoveConn = RunService.Heartbeat:Connect(function()
         if not smoothMoveTarget then return end
-        local char = game:GetService("Players").LocalPlayer.Character
-        if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-        local hrp  = char.HumanoidRootPart
+        local plr = Players.LocalPlayer
+        local char = plr and plr.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hrp or not hum then return end
+
         local dist = (hrp.Position - smoothMoveTarget).Magnitude
-        if dist < 3 then smoothMoveTarget = nil; return end
-        local dir   = (smoothMoveTarget - hrp.Position).Unit
-        local speed = _E.VolcanoTweenSpeed or 85
-        hrp.CFrame  = hrp.CFrame + dir * (speed * 0.016)
+        if dist < 3 then
+            smoothMoveTarget = nil
+            return
+        end
+
+        -- If humanoid isn't already moving toward this target, start MoveTo
+        -- (MoveTo is safe to call repeatedly; it will update the destination)
+        hum:MoveTo(smoothMoveTarget)
     end)
 end
 
@@ -249,6 +287,9 @@ local function StopSmoothMovement()
     end
     smoothMoveTarget = nil
 end
+
+
+
 
 local UI = {}
 
@@ -1053,5 +1094,300 @@ TabMisc:CreateInput(
     "",
     nil
 )
+
+-- ================================================================
+-- AUTOMATION LOOPS
+-- These run in the background and read the _E flags set by the UI.
+-- ================================================================
+
+-- Auto Kick loop
+task.spawn(function()
+    while task.wait(0.05) do
+        if not _E.HubRunning then break end
+        if not _E.AFarm then continue end
+        pcall(function()
+            local char = LP.Character
+            if not char or not char:FindFirstChild("Humanoid") then return end
+            char.Humanoid.MaxSlopeAngle = 0
+            if KkEvt then
+                local power = (_E.CustomKickPowerPercent or 100) / 100
+                KkEvt:FireServer(power)
+            end
+        end)
+    end
+end)
+
+-- Auto Predict loop
+-- Checks every 0.3s (not too fast). Fires kick when ball is within 35 studs.
+-- 35 studs gives enough reaction time to look natural.
+task.spawn(function()
+    while task.wait(0.3) do
+        if not _E.HubRunning then break end
+        if not _E.APredict then continue end
+        pcall(function()
+            local char = LP.Character
+            if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+            local ball = WS:FindFirstChild("Ball") or WS:FindFirstChildWhichIsA("BasePart")
+            if ball then
+                local dist = (ball.Position - char.HumanoidRootPart.Position).Magnitude
+                -- 35 studs: close enough to kick, far enough to look human
+                if dist < 35 and KkEvt then
+                    -- Small random delay before firing (0.05 - 0.15s) to avoid pattern detection
+                    task.wait(math.random(5, 15) / 100)
+                    KkEvt:FireServer((_E.CustomKickPowerPercent or 100) / 100)
+                end
+            end
+        end)
+    end
+end)
+
+-- Auto Train loop
+task.spawn(function()
+    while task.wait(1) do
+        if not _E.HubRunning then break end
+        if not _E.ATrain then continue end
+        pcall(function()
+            if SInteractEvt then SInteractEvt:FireServer("Train") end
+        end)
+    end
+end)
+
+-- Auto Claim 2x loop
+task.spawn(function()
+    while task.wait(2) do
+        if not _E.HubRunning then break end
+        if not _E.A2xTrain then continue end
+        pcall(function()
+            if SInteractEvt then SInteractEvt:FireServer("Claim2x") end
+        end)
+    end
+end)
+
+-- Auto Train + Collect Cash (combined, on a timer)
+local lastTrainCollect = 0
+task.spawn(function()
+    while task.wait(1) do
+        if not _E.HubRunning then break end
+        if not _E.ATrainCollect then continue end
+        if tick() - lastTrainCollect < (_E.TrainCollectDelay * 60) then continue end
+        lastTrainCollect = tick()
+        pcall(function()
+            if BCollectEvt then BCollectEvt:FireServer() end
+            if SInteractEvt then SInteractEvt:FireServer("Train") end
+        end)
+    end
+end)
+
+-- Auto Collect Cash loop
+local lastCollect = 0
+task.spawn(function()
+    while task.wait(1) do
+        if not _E.HubRunning then break end
+        if not _E.ACollect then continue end
+        if tick() - lastCollect < _E.CollectDelay then continue end
+        lastCollect = tick()
+        pcall(function()
+            if BCollectEvt then BCollectEvt:FireServer() end
+        end)
+    end
+end)
+
+-- Auto Rebirth loop
+task.spawn(function()
+    while task.wait(3) do
+        if not _E.HubRunning then break end
+        if not _E.ARebirth then continue end
+        pcall(function()
+            if not RebirthData then return end
+            local cost = 0
+            pcall(function()
+                cost = ParseWallet(tostring(RebirthData:GetKickRequirement(MyRebirthLevel + 1)))
+            end)
+            if MyKickLevel >= cost and cost > 0 then
+                if RebirthEvt then RebirthEvt:FireServer() end
+            end
+        end)
+    end
+end)
+
+-- Auto Plot Upgrade loop
+task.spawn(function()
+    while task.wait(5) do
+        if not _E.HubRunning then break end
+        if not _E.APlotUpgrade then continue end
+        pcall(function()
+            if PlotUpgradeEvt then PlotUpgradeEvt:FireServer() end
+        end)
+    end
+end)
+
+-- Auto Buy Speed loop
+task.spawn(function()
+    while task.wait(3) do
+        if not _E.HubRunning then break end
+        if not _E.ABuySpeed then continue end
+        pcall(function()
+            if not SpeedData then return end
+            local cost = 0
+            pcall(function()
+                cost = ParseWallet(tostring(SpeedData:GetCostForLevel(MyKickLevel + 1)))
+            end)
+            if MyMoney >= cost and cost > 0 then
+                if SpeedUpEvt then SpeedUpEvt:FireServer() end
+            end
+        end)
+    end
+end)
+
+-- Auto Buy Weight loop
+task.spawn(function()
+    while task.wait(3) do
+        if not _E.HubRunning then break end
+        if not _E.ABuyWeights and not _E.ABuyBest then continue end
+        pcall(function()
+            local targetName = _E.TTargetWeight
+            if _E.ABuyBest and weightsFolder then
+                local bestName, bestPrice = nil, math.huge
+                for _, w in ipairs(weightsFolder:GetChildren()) do
+                    local price = GetWeightPrice(w.Name)
+                    if price <= MyMoney and price < bestPrice then
+                        bestPrice = price
+                        bestName  = w.Name
+                    end
+                end
+                targetName = bestName
+            end
+            if targetName and targetName ~= "None" and WeightEquipEvt then
+                WeightEquipEvt:FireServer(targetName)
+            end
+        end)
+    end
+end)
+
+-- Auto Favorite scan function (called by toggle and loop)
+local function RunFavoriteScan()
+    pcall(function()
+        local myPlot = GetMyPlot()
+        if not myPlot or not myPlot:FindFirstChild("Slots") then return end
+        for _, slot in ipairs(myPlot.Slots:GetChildren()) do
+            local placed = slot:FindFirstChild("PlacedPart")
+            if placed then
+                for _, pet in ipairs(placed:GetChildren()) do
+                    if pet:IsA("Model") and not pet.Name:match("Hitbox") then
+                        local mut  = GetMutation(pet)
+                        local name = pet.Name
+                        local matchBrainrot = (not _E.TSSellBrainrot or #_E.TSSellBrainrot == 0
+                            or table.find(_E.TSSellBrainrot, "Any")
+                            or table.find(_E.TSSellBrainrot, name))
+                        local matchMutation = (not _E.TSSellMutation or #_E.TSSellMutation == 0
+                            or table.find(_E.TSSellMutation, "Any")
+                            or table.find(_E.TSSellMutation, mut))
+                        if matchBrainrot and matchMutation and ToggleFavEvt then
+                            ToggleFavEvt:FireServer(pet)
+                            task.wait(0.1)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+_E.TriggerFavScan = RunFavoriteScan
+
+task.spawn(function()
+    while task.wait(10) do
+        if not _E.HubRunning then break end
+        if not _E.AAutoFav then continue end
+        RunFavoriteScan()
+    end
+end)
+
+-- Volcano shard collection loop
+-- Scans every 1.5s, moves at a moderate speed (55 studs/s), waits 0.4s before collecting.
+-- Fast enough to be useful, slow enough to not look like a teleport hack.
+local CollectedShards = {}
+task.spawn(function()
+    while task.wait(_E.VolcanoCollectDelay or 1.5) do
+        if not _E.HubRunning then break end
+        if not _E.AVolcanoMaster and not _E.AVolcanoCollect then continue end
+        if not IsVolcanoEventActive() then continue end
+        pcall(function()
+            local char = LP.Character
+            if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+            local hrp = char.HumanoidRootPart
+            local shardsFolder = WS:FindFirstChild("Shards")
+                or WS:FindFirstChild("Orbs")
+                or WS:FindFirstChild("VolcanoShards")
+            if not shardsFolder then return end
+            local nearest, nearestDist = nil, math.huge
+            for _, shard in ipairs(shardsFolder:GetChildren()) do
+                if shard:IsA("BasePart") and not CollectedShards[shard] then
+                    local dist = (shard.Position - hrp.Position).Magnitude
+                    if dist < (_E.VolcanoCollectRange or 100) and dist < nearestDist then
+                        nearest     = shard
+                        nearestDist = dist
+                    end
+                end
+            end
+            if nearest then
+                CollectedShards[nearest] = true
+                nearest.AncestryChanged:Connect(function()
+                    CollectedShards[nearest] = nil
+                end)
+                -- Move toward shard at a moderate speed (not instant teleport)
+                -- VolcanoTweenSpeed default is 55 studs/s — feels natural
+                _E.VolcanoTweenSpeed = _E.VolcanoTweenSpeed or 55
+                smoothMoveTarget = nearest.Position
+                -- Wait for movement to reach the shard before collecting
+                -- (0.4s base + small random offset so timing varies each time)
+                task.wait(0.4 + math.random(5, 15) / 100)
+                if SInteractEvt then SInteractEvt:FireServer("CollectShard", nearest) end
+            end
+        end)
+    end
+end)
+
+-- Volcano auto upgrade loop
+task.spawn(function()
+    while task.wait(3) do
+        if not _E.HubRunning then break end
+        if not _E.AVolcanoUpgrade then continue end
+        if not IsVolcanoEventActive() then continue end
+        pcall(function()
+            if SInteractEvt then
+                SInteractEvt:FireServer("VolcanoUpgrade", _E.TVolcanoUpgrade)
+            end
+        end)
+    end
+end)
+
+-- Volcano auto buy loop
+task.spawn(function()
+    while task.wait(3) do
+        if not _E.HubRunning then break end
+        if not _E.AVolcanoBuy then continue end
+        if not IsVolcanoEventActive() then continue end
+        pcall(function()
+            if ShopBuyEvt then
+                ShopBuyEvt:FireServer("Volcano", _E.TVolcanoBuy)
+            end
+        end)
+    end
+end)
+
+-- Re-apply godmode and kick slope on character respawn
+LP.CharacterAdded:Connect(function(char)
+    task.wait(1)
+    if _E.GodmodeEnabled then
+        local ff = Instance.new("ForceField")
+        ff.Visible = false
+        ff.Parent  = char
+    end
+    local hum = char:WaitForChild("Humanoid", 5)
+    if hum and _E.AFarm then
+        hum.MaxSlopeAngle = 0
+    end
+end)
 
 end
